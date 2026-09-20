@@ -1,0 +1,59 @@
+substitutions:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 8MB
+
+# Board specific entities
+# Output that blinks the LED
+output:
+  - platform: template
+    id: status_output
+    type: binary
+    write_action:
+      - if:
+          condition:
+            lambda: return (state);
+          then:
+            - light.turn_on:
+                id: led
+                brightness: 70%
+                red: 100%
+                green: 0%
+                blue: 0%
+          else:
+            - light.turn_off: led
+
+light:
+  # Enable status LED
+  - platform: status_led
+    output: status_output
+    name: "Status Led"
+    internal: true
+    entity_category: diagnostic
+
+  #G35=RGB WS2812C-2020 (4x LEDs under the button)
+  - platform: esp32_rmt_led_strip
+    channel_colors: GRB
+    pin: GPIO35
+    num_leds: 4
+    chipset: ws2812
+    id: led
+    name: "Led"
+    entity_category: diagnostic
+
+#G41=Button
+binary_sensor:
+  - platform: gpio
+    name: Button
+    entity_category: diagnostic
+    pin:
+      number: GPIO41
+      inverted: true
+      mode:
+        input: true
+        pullup: true
+    filters:
+      - delayed_off: 10ms
+    on_press:
+      then:
+        - logger.log: Button Pressed

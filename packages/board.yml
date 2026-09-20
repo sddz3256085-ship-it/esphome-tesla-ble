@@ -1,0 +1,11 @@
+esp32:
+  board: $board
+  variant: $variant
+  flash_size: $flash_size
+  # framework type defaults to esp-idf (only the managed components list
+  # below needs the block to exist).
+  framework:
+    components:
+      - name: tesla-ble
+        source: https://github.com/yoziru/tesla-ble.git
+        ref: v5.2.0
