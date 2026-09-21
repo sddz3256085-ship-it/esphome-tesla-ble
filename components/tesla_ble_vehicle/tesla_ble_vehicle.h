@@ -123,6 +123,7 @@ public:
     // Public vehicle actions
     // ==========================================================================
     int wake_vehicle();
+    int start_driving();
     int start_pairing();
     int regenerate_key();
     void force_update();
@@ -279,6 +280,7 @@ using TeslaButtonBase = WithParent<button::Button>;
 
 // Define all button types using the macro
 DEFINE_TESLA_BUTTON(TeslaWakeButton, wake_vehicle)
+DEFINE_TESLA_BUTTON(TeslaStartDrivingButton, start_driving)
 DEFINE_TESLA_BUTTON(TeslaPairButton, start_pairing)
 DEFINE_TESLA_BUTTON(TeslaRegenerateKeyButton, regenerate_key)
 DEFINE_TESLA_BUTTON(TeslaForceUpdateButton, force_update)
