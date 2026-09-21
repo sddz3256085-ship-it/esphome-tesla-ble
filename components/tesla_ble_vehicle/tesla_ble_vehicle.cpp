@@ -588,6 +588,21 @@ int TeslaBLEVehicle::wake_vehicle() {
   return 0;
 }
 
+int TeslaBLEVehicle::start_driving() {
+  ESP_LOGI(TAG, "Remote drive (start driving) requested");
+
+  if (!vehicle_)
+    return -1;
+
+  send_command_with_tracking(
+      UniversalMessage_Domain_DOMAIN_VEHICLE_SECURITY, "Remote Drive",
+      [](TeslaBLE::Client *client, uint8_t *buff, size_t *len) {
+        return client->build_vcsec_action_message(VCSEC_RKEAction_E_RKE_ACTION_REMOTE_DRIVE, buff, len);
+      },
+      TeslaBLE::WakePolicy::WAKE_IF_NEEDED);
+  return 0;
+}
+
 int TeslaBLEVehicle::start_pairing() {
   ESP_LOGI(TAG, "Pairing requested");
 
