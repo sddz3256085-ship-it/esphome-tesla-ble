@@ -30,6 +30,7 @@ TeslaBLEVehicle = tesla_ble_vehicle_ns.class_(
 # Custom button classes - generated via macro in C++, just reference here
 # The class name follows pattern: Tesla{Id}Button where Id is PascalCase of id
 TeslaWakeButton = tesla_ble_vehicle_ns.class_("TeslaWakeButton", button.Button)
+TeslaStartDrivingButton = tesla_ble_vehicle_ns.class_("TeslaStartDrivingButton", button.Button)
 TeslaPairButton = tesla_ble_vehicle_ns.class_("TeslaPairButton", button.Button)
 TeslaRegenerateKeyButton = tesla_ble_vehicle_ns.class_("TeslaRegenerateKeyButton", button.Button)
 TeslaForceUpdateButton = tesla_ble_vehicle_ns.class_("TeslaForceUpdateButton", button.Button)
@@ -172,6 +173,7 @@ TEXT_SENSORS = [
 
 BUTTONS = [
     {"id": "wake", "name": "Wake up", "class": TeslaWakeButton, "setter": "set_wake_button", "icon": "mdi:sleep-off"},
+    {"id": "start_driving", "name": "Start Driving", "class": TeslaStartDrivingButton, "setter": None, "icon": "mdi:car-connected"},
     {"id": "pair", "name": "Pair BLE Key", "class": TeslaPairButton, "setter": "set_pair_button", "icon": "mdi:key-wireless", "entity_category": "diagnostic"},
     {"id": "regenerate_key", "name": "Regenerate key", "class": TeslaRegenerateKeyButton, "setter": "set_regenerate_key_button", "icon": "mdi:key-change", "entity_category": "diagnostic", "disabled_by_default": True},
     {"id": "force_update", "name": "Force data update", "class": TeslaForceUpdateButton, "setter": "set_force_update_button", "icon": "mdi:database-sync", "entity_category": "diagnostic"},
