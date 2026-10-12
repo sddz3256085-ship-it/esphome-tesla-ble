@@ -1,0 +1,1055 @@
+Only in esphome-tesla-ble: .gitignore
+diff -ru '--exclude=.esphome' '--exclude=secrets.yaml' '--exclude=SCHEMA_SCAN_2026.md' esphome-tesla-132-fixed/README.md esphome-tesla-ble/README.md
+--- esphome-tesla-132-fixed/README.md	2026-10-12 10:53:06.869267475 +0000
++++ esphome-tesla-ble/README.md	2026-10-12 12:01:32.573115827 +0000
+@@ -27,25 +27,103 @@
+ 
+ ### Polling Intervals
+ 
+-The component supports configurable polling intervals to balance responsiveness and battery life:
++The component supports configurable polling intervals to balance responsiveness and battery life.
++All four intervals accept floats down to **0.2 s** (e.g. `3`, `2.5`, `0.2` are all valid):
+ 
+ ```yaml
+ tesla_ble_vehicle:
+   # ... other configuration ...
+   
+-  # Polling intervals (in seconds)
+-  vcsec_poll_interval: 10                      # Vehicle status polling (default: 10s, range: 5-300s)
+-  infotainment_poll_interval_awake: 30         # Data polling when awake (default: 30s, range: 10-600s)
+-  infotainment_poll_interval_active: 10        # Data polling when active (default: 10s, range: 5-120s)
+-  infotainment_sleep_timeout: 660              # Wake window duration (default: 11min, range: 1-60min)
++  # Polling intervals (in seconds, floats allowed, minimum 0.2)
++  vcsec_poll_interval: 10                      # Vehicle status polling (default: 10s, range: 0.2-300s)
++  infotainment_poll_interval_awake: 30         # Data polling when awake (default: 30s, range: 0.2-600s)
++  infotainment_poll_interval_active: 10        # Data polling when active (default: 10s, range: 0.2-120s)
++  infotainment_sleep_timeout: 660              # Wake window duration (default: 11min, range: 0.2-3600s)
+ ```
+ 
++
++> [!NOTE]
++> The upstream `yoziru/esphome-tesla-ble` library restricts `vcsec_poll_interval` to
++> integer values >= 5 (`cv.int_range(min=5)`), which rejects configurations such as
++> `vcsec_poll_interval: 3` with `value must be at least 5`. This fork lifts that
++> limit to 0.2 s so aggressive polling (e.g. `3` or even `0.2`) validates and works.
++> `vcsec_poll_interval` also drives the ESPHome `update_interval` of the hub component.
++
+ **Polling Types:**
+ - **VCSEC**: Basic vehicle status (sleep/awake, locked/unlocked, user presence) - safe to poll when asleep
+ - **Infotainment Awake**: Detailed data (battery, charging state) when awake but not active
+ - **Infotainment Active**: Frequent updates when charging, unlocked, or user present
+ 
+ 
++### Entity Declaration Styles (both are supported)
++
++Every auto-created entity can be exposed to Home Assistant with a custom id/name in
++one of two fully equivalent ways:
++
++**Style 1 - direct sub-keys of the `tesla_ble_vehicle:` block** (used by `packages/client.yml`):
++
++```yaml
++tesla_ble_vehicle:
++  id: tesla_ble_vehicle_id
++  # ...
++  locked:
++    id: vehicle_locked
++    name: "Tesla Vehicle Locked State"
++  user_present:
++    id: vehicle_user_present
++    name: "Tesla User Presence"
++  shift_state:
++    id: vehicle_shift_state
++    name: "Tesla Shift State"
++```
++
++**Style 2 - standard ESPHome platform blocks**:
++
++```yaml
++binary_sensor:
++  - platform: tesla_ble_vehicle
++    tesla_ble_vehicle_id: tesla_ble_vehicle_id
++    locked:
++      id: vehicle_locked
++      name: "Tesla Vehicle Locked State"
++    user_present:
++      id: vehicle_user_present
++      name: "Tesla User Presence"
++
++text_sensor:
++  - platform: tesla_ble_vehicle
++    tesla_ble_vehicle_id: tesla_ble_vehicle_id
++    shift_state:
++      id: vehicle_shift_state
++      name: "Tesla Shift State"
++
++sensor:
++  - platform: tesla_ble_vehicle
++    tesla_ble_vehicle_id: tesla_ble_vehicle_id
++    odometer:
++      id: vehicle_odometer
++      name: "Tesla Odometer"
++```
++
++Notes:
++- Declaring the *same* key in both places is rejected at config validation time
++  with a clear error message - pick one style per entity.
++- Removing a declaration does not delete the entity from the firmware: the
++  auto-created entity still exists internally and keeps receiving updates, but it
++  is `internal` and therefore not exposed to Home Assistant, and its custom `id:`
++  is gone (lambdas referencing that id will fail to compile).
++- Available binary_sensor keys: `asleep`, `user_present`, `locked`, `charging`,
++  `charge_flap_open`, `boot_open`, `frunk_open`, `windows_state`, `climate_on`,
++  `parking_brake`, `door_*`, `window_*`, `sunroof`.
++- Available sensor keys: `battery_level`, `range`, `range_rated_api`, `inside_temp`,
++  `outside_temp`, `driver_temp_setting`, `passenger_temp_setting`, `odometer`, `speed`,
++  `charger_power`, `charger_voltage`, `charger_current`, `charging_rate`, `charge_rate`,
++  `charge_energy_added` (alias: `energy_added`), `time_to_full_charge` (alias: `time_to_full`),
++  `tpms_*`, `max_soc`, `max_amps`, `charge_distance_added`, `charger_phases`,
++  `ble_disconnected_time`.
++- Available text_sensor keys: `shift_state`, `charging_state`, `iec61851_state`,
++  `defrost_state`, `charge_port_latch_state`.
++
+ **IEC 61851 text sensor**
+ 
+ The component exposes a text sensor that maps Tesla infotainment charge states to IEC 61851 states:
+diff -ru '--exclude=.esphome' '--exclude=secrets.yaml' '--exclude=SCHEMA_SCAN_2026.md' esphome-tesla-132-fixed/components/tesla_ble_vehicle/__init__.py esphome-tesla-ble/components/tesla_ble_vehicle/__init__.py
+--- esphome-tesla-132-fixed/components/tesla_ble_vehicle/__init__.py	2026-10-12 10:53:37.507464788 +0000
++++ esphome-tesla-ble/components/tesla_ble_vehicle/__init__.py	2026-10-12 12:03:20.573806258 +0000
+@@ -1,6 +1,15 @@
+ import esphome.codegen as cg
+ import esphome.config_validation as cv
+-from esphome.components import ble_client, binary_sensor, button, switch, number, sensor, text_sensor, lock, cover, climate
++from esphome.components import ble_client, button, switch, number, lock, cover, climate
++# IMPORTANT: `binary_sensor`, `sensor` and `text_sensor` are ALSO the file names of
++# this component's platform submodules (_binary_sensor.py / _sensor.py / _text_sensor.py).
++# When Python loads such a submodule it setattr()s it on the *package*, and a module's
++# attributes share the same __dict__ as this file's globals - so the plain names below
++# would get silently overwritten at platform load time. Import them under private
++# aliases that can never collide.
++import esphome.components.binary_sensor as _binary_sensor
++import esphome.components.sensor as _sensor
++import esphome.components.text_sensor as _text_sensor
+ from esphome.const import (
+     CONF_ACCURACY_DECIMALS,
+     CONF_DEVICE_CLASS,
+@@ -15,7 +24,11 @@
+     CONF_RESTORE_MODE,
+     CONF_UNIT_OF_MEASUREMENT,
+ )
++import esphome.final_validate as fv
++from esphome.types import ConfigType
++
+ from esphome import automation
++from esphome.core import CORE
+ 
+ 
+ CODEOWNERS = ["@yoziru"]
+@@ -202,60 +215,64 @@
+             cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE, default=30.0): cv.float_range(min=0.2, max=600.0),
+             cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE, default=10.0): cv.float_range(min=0.2, max=120.0),
+             cv.Optional(CONF_INFOTAINMENT_SLEEP_TIMEOUT, default=660.0): cv.float_range(min=0.2, max=3600.0),
+-            cv.Optional("battery_level"): sensor.sensor_schema(unit_of_measurement="%", device_class="battery", accuracy_decimals=0),
++            cv.Optional("battery_level"): _sensor.sensor_schema(unit_of_measurement="%", device_class="battery", accuracy_decimals=0),
+             # NOTE: accuracy_decimals 0 -> 2 (PedroKTFC parity: battery_range is a float with 2 decimals).
+-            cv.Optional("range"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=2), 
+-            cv.Optional("range_rated_api"): sensor.sensor_schema(unit_of_measurement="km", accuracy_decimals=1),
+-            cv.Optional("inside_temp"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
+-            cv.Optional("outside_temp"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
+-            cv.Optional("driver_temp_setting"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
+-            cv.Optional("passenger_temp_setting"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
++            cv.Optional("range"): _sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=2), 
++            cv.Optional("range_rated_api"): _sensor.sensor_schema(unit_of_measurement="km", accuracy_decimals=1),
++            cv.Optional("inside_temp"): _sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
++            cv.Optional("outside_temp"): _sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
++            cv.Optional("driver_temp_setting"): _sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
++            cv.Optional("passenger_temp_setting"): _sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
+             # BUGFIX: unit "km" -> "mi". update_drive_state() publishes
+             # optional_odometer_in_hundredths_of_a_mile / 100, i.e. MILES. The old "km"
+             # default made the user-overridden odometer entity show a value that was
+             # off by a factor of 1.609. accuracy_decimals 1 -> 2 for PedroKTFC parity.
+-            cv.Optional("odometer"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=2),
+-            cv.Optional("speed"): sensor.sensor_schema(unit_of_measurement="km/h", device_class="speed", accuracy_decimals=1),
+-            cv.Optional("charge_energy_added"): sensor.sensor_schema(unit_of_measurement="kWh", device_class="energy", accuracy_decimals=2),
+-            cv.Optional("charge_rate"): sensor.sensor_schema(unit_of_measurement="km/h", device_class="speed", accuracy_decimals=1),
+-            cv.Optional("charger_power"): sensor.sensor_schema(unit_of_measurement="kW", device_class="power", accuracy_decimals=0),
+-            cv.Optional("charger_voltage"): sensor.sensor_schema(unit_of_measurement="V", device_class="voltage", accuracy_decimals=0), 
+-            cv.Optional("charger_current"): sensor.sensor_schema(unit_of_measurement="A", device_class="current", accuracy_decimals=1), 
+-            cv.Optional("charging_rate"): sensor.sensor_schema(unit_of_measurement="mph", device_class="speed", accuracy_decimals=1),   
+-            cv.Optional("time_to_full_charge"): sensor.sensor_schema(unit_of_measurement="min", device_class="duration", accuracy_decimals=0),
+-            cv.Optional("tpms_front_left"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),  
+-            cv.Optional("tpms_front_right"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),  
+-            cv.Optional("tpms_rear_left"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),   
+-            cv.Optional("tpms_rear_right"): sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),  
++            cv.Optional("odometer"): _sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=2),
++            cv.Optional("speed"): _sensor.sensor_schema(unit_of_measurement="km/h", device_class="speed", accuracy_decimals=1),
++            cv.Optional("charge_energy_added"): _sensor.sensor_schema(unit_of_measurement="kWh", device_class="energy", accuracy_decimals=2),
++            cv.Optional("charge_rate"): _sensor.sensor_schema(unit_of_measurement="km/h", device_class="speed", accuracy_decimals=1),
++            cv.Optional("charger_power"): _sensor.sensor_schema(unit_of_measurement="kW", device_class="power", accuracy_decimals=0),
++            cv.Optional("charger_voltage"): _sensor.sensor_schema(unit_of_measurement="V", device_class="voltage", accuracy_decimals=0), 
++            cv.Optional("charger_current"): _sensor.sensor_schema(unit_of_measurement="A", device_class="current", accuracy_decimals=1), 
++            cv.Optional("charging_rate"): _sensor.sensor_schema(unit_of_measurement="mph", device_class="speed", accuracy_decimals=1),   
++            cv.Optional("time_to_full_charge"): _sensor.sensor_schema(unit_of_measurement="min", device_class="duration", accuracy_decimals=0),
++            cv.Optional("tpms_front_left"): _sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),  
++            cv.Optional("tpms_front_right"): _sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),  
++            cv.Optional("tpms_rear_left"): _sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),   
++            cv.Optional("tpms_rear_right"): _sensor.sensor_schema(unit_of_measurement="bar", device_class="pressure", accuracy_decimals=1),  
++            # Legacy aliases (map onto the live hub ids charge_energy_added / time_to_full_charge).
++            cv.Optional("energy_added"): _sensor.sensor_schema(unit_of_measurement="kWh", device_class="energy", accuracy_decimals=2),
++            cv.Optional("time_to_full"): _sensor.sensor_schema(unit_of_measurement="min", device_class="duration", accuracy_decimals=0),
+             # --- Migrated from PedroKTFC/esphome-tesla-ble ---
+-            cv.Optional("max_soc"): sensor.sensor_schema(unit_of_measurement="%", device_class="battery", accuracy_decimals=0),
+-            cv.Optional("max_amps"): sensor.sensor_schema(unit_of_measurement="A", device_class="current", accuracy_decimals=0),
+-            cv.Optional("charge_distance_added"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=2),
+-            cv.Optional("charger_phases"): sensor.sensor_schema(accuracy_decimals=0),
+-            cv.Optional("ble_disconnected_time"): sensor.sensor_schema(unit_of_measurement="s", device_class="duration", accuracy_decimals=0),
+-            cv.Optional("locked"): binary_sensor.binary_sensor_schema(device_class="lock"),
++            cv.Optional("max_soc"): _sensor.sensor_schema(unit_of_measurement="%", device_class="battery", accuracy_decimals=0),
++            cv.Optional("max_amps"): _sensor.sensor_schema(unit_of_measurement="A", device_class="current", accuracy_decimals=0),
++            cv.Optional("charge_distance_added"): _sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=2),
++            cv.Optional("charger_phases"): _sensor.sensor_schema(accuracy_decimals=0),
++            cv.Optional("ble_disconnected_time"): _sensor.sensor_schema(unit_of_measurement="s", device_class="duration", accuracy_decimals=0),
++            cv.Optional("locked"): _binary_sensor.binary_sensor_schema(device_class="lock"),
+             # NOTE: device_class "presence" -> "occupancy" so the user-override schema
+             # matches both the auto-created entity and Pedro's original is_user_present.
+-            cv.Optional("user_present"): binary_sensor.binary_sensor_schema(device_class="occupancy"),
++            cv.Optional("user_present"): _binary_sensor.binary_sensor_schema(device_class="occupancy"),
+             # NOTE: device_class "opening" -> "door" so the user-override schema matches
+             # both the auto-created entity and Pedro's original is_charge_flap_open.
+-            cv.Optional("charge_flap_open"): binary_sensor.binary_sensor_schema(device_class="door"),
+-            cv.Optional("boot_open"): binary_sensor.binary_sensor_schema(device_class="door"),
+-            cv.Optional("frunk_open"): binary_sensor.binary_sensor_schema(device_class="door"),
+-            cv.Optional("windows_state"): binary_sensor.binary_sensor_schema(device_class="window"),
+-            cv.Optional("climate_on"): binary_sensor.binary_sensor_schema(),
+-            cv.Optional("asleep"): binary_sensor.binary_sensor_schema(),
+-            cv.Optional("charging"): binary_sensor.binary_sensor_schema(device_class="battery_charging"),
++            cv.Optional("charge_flap_open"): _binary_sensor.binary_sensor_schema(device_class="door"),
++            cv.Optional("boot_open"): _binary_sensor.binary_sensor_schema(device_class="door"),
++            cv.Optional("frunk_open"): _binary_sensor.binary_sensor_schema(device_class="door"),
++            cv.Optional("windows_state"): _binary_sensor.binary_sensor_schema(device_class="window"),
++            cv.Optional("climate_on"): _binary_sensor.binary_sensor_schema(),
++            cv.Optional("asleep"): _binary_sensor.binary_sensor_schema(),
++            cv.Optional("charging"): _binary_sensor.binary_sensor_schema(device_class="battery_charging"),
+             # Additional binary sensors (auto-created but internal, allow user override)
+-            cv.Optional("parking_brake"): binary_sensor.binary_sensor_schema(device_class="problem"),
+-            cv.Optional("door_driver_front"): binary_sensor.binary_sensor_schema(device_class="door"),
+-            cv.Optional("door_driver_rear"): binary_sensor.binary_sensor_schema(device_class="door"),
+-            cv.Optional("door_passenger_front"): binary_sensor.binary_sensor_schema(device_class="door"),
+-            cv.Optional("door_passenger_rear"): binary_sensor.binary_sensor_schema(device_class="door"),
+-            cv.Optional("window_driver_front"): binary_sensor.binary_sensor_schema(device_class="window"),
+-            cv.Optional("window_driver_rear"): binary_sensor.binary_sensor_schema(device_class="window"),
+-            cv.Optional("window_passenger_front"): binary_sensor.binary_sensor_schema(device_class="window"),
+-            cv.Optional("window_passenger_rear"): binary_sensor.binary_sensor_schema(device_class="window"),
++            cv.Optional("parking_brake"): _binary_sensor.binary_sensor_schema(device_class="problem"),
++            cv.Optional("door_driver_front"): _binary_sensor.binary_sensor_schema(device_class="door"),
++            cv.Optional("door_driver_rear"): _binary_sensor.binary_sensor_schema(device_class="door"),
++            cv.Optional("door_passenger_front"): _binary_sensor.binary_sensor_schema(device_class="door"),
++            cv.Optional("door_passenger_rear"): _binary_sensor.binary_sensor_schema(device_class="door"),
++            cv.Optional("window_driver_front"): _binary_sensor.binary_sensor_schema(device_class="window"),
++            cv.Optional("window_driver_rear"): _binary_sensor.binary_sensor_schema(device_class="window"),
++            cv.Optional("window_passenger_front"): _binary_sensor.binary_sensor_schema(device_class="window"),
++            cv.Optional("window_passenger_rear"): _binary_sensor.binary_sensor_schema(device_class="window"),
++            cv.Optional("sunroof"): _binary_sensor.binary_sensor_schema(device_class="window"),
+             # Switches (auto-created but internal, allow user override)
+             cv.Optional("charging_switch"): switch.switch_schema(TeslaChargingSwitch, icon="mdi:ev-station"),
+             cv.Optional("steering_wheel_heat_switch"): switch.switch_schema(TeslaSteeringWheelHeatSwitch, icon="mdi:steering"),
+@@ -269,12 +286,12 @@
+             cv.Optional("trunk_cover"): cover.cover_schema(TeslaTrunkCover, icon="mdi:car-back", device_class="door"),
+             cv.Optional("windows_cover"): cover.cover_schema(TeslaWindowsCover, icon="mdi:car-door", device_class="awning"),
+             cv.Optional("charge_port_door_cover"): cover.cover_schema(TeslaChargePortDoorCover, icon="mdi:ev-plug-tesla", device_class="door"),
+-            cv.Optional("shift_state"): text_sensor.text_sensor_schema(),
+-            cv.Optional("charging_state"): text_sensor.text_sensor_schema(),
+-            cv.Optional("iec61851_state"): text_sensor.text_sensor_schema(),
++            cv.Optional("shift_state"): _text_sensor.text_sensor_schema(),
++            cv.Optional("charging_state"): _text_sensor.text_sensor_schema(),
++            cv.Optional("iec61851_state"): _text_sensor.text_sensor_schema(),
+             # --- Migrated from PedroKTFC/esphome-tesla-ble ---
+-            cv.Optional("defrost_state"): text_sensor.text_sensor_schema(),
+-            cv.Optional("charge_port_latch_state"): text_sensor.text_sensor_schema(),
++            cv.Optional("defrost_state"): _text_sensor.text_sensor_schema(),
++            cv.Optional("charge_port_latch_state"): _text_sensor.text_sensor_schema(),
+         },
+     )
+     .extend(cv.polling_component_schema("10s"))
+@@ -286,33 +303,33 @@
+         return None
+     return getattr(component_module, f"DEVICE_CLASS_{device_class_str.upper()}", None)
+ 
+-async def create_binary_sensor(var, definition, user_config=None):
++async def create_binary_sensor(var, definition, user_config=None, user_defined=False):
+     if user_config:
+-        bs = await binary_sensor.new_binary_sensor(user_config)
++        bs = await _binary_sensor.new_binary_sensor(user_config)
+     else:
+         config = {
+-            CONF_ID: cv.declare_id(binary_sensor.BinarySensor)(f"tesla_{definition['id']}_sensor"),
++            CONF_ID: cv.declare_id(_binary_sensor.BinarySensor)(f"tesla_{definition['id']}_sensor"),
+             CONF_NAME: definition["name"],
+             CONF_DISABLED_BY_DEFAULT: definition.get("disabled_by_default", False),
+         }
+         if "icon" in definition: config[CONF_ICON] = definition["icon"]
+         if "device_class" in definition:
+-            dc = get_device_class_const(binary_sensor, definition["device_class"])
++            dc = get_device_class_const(_binary_sensor, definition["device_class"])
+             if dc: config[CONF_DEVICE_CLASS] = dc
+         if definition.get("entity_category") == "diagnostic":
+             config[CONF_ENTITY_CATEGORY] = cg.EntityCategory.ENTITY_CATEGORY_DIAGNOSTIC
+         if definition.get("internal"):
+             config[CONF_INTERNAL] = True
+-        bs = await binary_sensor.new_binary_sensor(config)
+-    cg.add(var.set_binary_sensor(definition["id"], bs))
++        bs = await _binary_sensor.new_binary_sensor(config)
++    cg.add(var.set_binary_sensor(definition["id"], bs, user_defined))
+     return bs
+ 
+-async def create_sensor(var, definition, user_config=None):
++async def create_sensor(var, definition, user_config=None, user_defined=False):
+     if user_config:
+-        sens = await sensor.new_sensor(user_config)
++        sens = await _sensor.new_sensor(user_config)
+     else:
+         config = {
+-            CONF_ID: cv.declare_id(sensor.Sensor)(f"tesla_{definition['id']}_sensor"),
++            CONF_ID: cv.declare_id(_sensor.Sensor)(f"tesla_{definition['id']}_sensor"),
+             CONF_NAME: definition["name"],
+             CONF_DISABLED_BY_DEFAULT: definition.get("disabled_by_default", False),
+             CONF_FORCE_UPDATE: False,
+@@ -321,22 +338,22 @@
+         if "unit" in definition: config[CONF_UNIT_OF_MEASUREMENT] = definition["unit"]
+         if "accuracy_decimals" in definition: config[CONF_ACCURACY_DECIMALS] = definition["accuracy_decimals"]
+         if "device_class" in definition:
+-            dc = get_device_class_const(sensor, definition["device_class"])
++            dc = get_device_class_const(_sensor, definition["device_class"])
+             if dc: config[CONF_DEVICE_CLASS] = dc
+         if definition.get("entity_category") == "diagnostic":
+             config[CONF_ENTITY_CATEGORY] = cg.EntityCategory.ENTITY_CATEGORY_DIAGNOSTIC
+         if definition.get("internal"):
+             config[CONF_INTERNAL] = True
+-        sens = await sensor.new_sensor(config)
+-    cg.add(var.set_sensor(definition["id"], sens))
++        sens = await _sensor.new_sensor(config)
++    cg.add(var.set_sensor(definition["id"], sens, user_defined))
+     return sens
+ 
+-async def create_text_sensor(var, definition, user_config=None):
++async def create_text_sensor(var, definition, user_config=None, user_defined=False):
+     if user_config:
+-        ts = await text_sensor.new_text_sensor(user_config)
++        ts = await _text_sensor.new_text_sensor(user_config)
+     else:
+         config = {
+-            CONF_ID: cv.declare_id(text_sensor.TextSensor)(f"tesla_{definition['id']}_sensor"),
++            CONF_ID: cv.declare_id(_text_sensor.TextSensor)(f"tesla_{definition['id']}_sensor"),
+             CONF_NAME: definition["name"],
+             CONF_DISABLED_BY_DEFAULT: definition.get("disabled_by_default", False),
+             CONF_FORCE_UPDATE: False,
+@@ -346,8 +363,8 @@
+             config[CONF_ENTITY_CATEGORY] = cg.EntityCategory.ENTITY_CATEGORY_DIAGNOSTIC
+         if definition.get("internal"):
+             config[CONF_INTERNAL] = True
+-        ts = await text_sensor.new_text_sensor(config)
+-    cg.add(var.set_text_sensor(definition["id"], ts))
++        ts = await _text_sensor.new_text_sensor(config)
++    cg.add(var.set_text_sensor(definition["id"], ts, user_defined))
+     return ts
+ 
+ async def create_button(var, definition):
+@@ -479,13 +496,16 @@
+     "charge_distance_added": "charge_distance_added",
+     "charger_phases": "charger_phases",
+     "ble_disconnected_time": "ble_disconnected_time",
++    # Legacy aliases (kept so old configs keep working); they map onto the live hub ids.
++    "energy_added": "charge_energy_added",
++    "time_to_full": "time_to_full_charge",
+     # NOTE: the duplicate "charge_rate": "charge_rate" entry that used to sit here
+     # was removed - a Python dict literal silently keeps only the last duplicate key.
+ }
+ 
+ BINARY_SENSOR_OVERRIDES = {
+     # "locked" now HAS an auto entity (id "locked", see BINARY_SENSORS) -
+-    # it is TeslaBLEVehicle's equivalent of Pedro's "is_unlocked" sensor.
++    # it is TeslaBLEVehicle's equivalent of Pedro's "is_unlocked" _sensor.
+     "locked": "locked",
+     "user_present": "user_present",
+     # "charge_flap_open" now HAS an auto entity too (Pedro's "is_charge_flap_open").
+@@ -506,6 +526,7 @@
+     "frunk_open": "frunk_open",
+     "windows_state": "windows_state",
+     "climate_on": "climate_on",
++    "sunroof": "sunroof",
+ }
+ 
+ TEXT_SENSOR_OVERRIDES = {
+@@ -540,6 +561,91 @@
+ }
+ 
+ 
++# =============================================================================
++# Platform-style declarations (`binary_sensor:`/`sensor:`/`text_sensor:` with
++# `platform: tesla_ble_vehicle`) are supported in addition to the direct
++# sub-keys of the `tesla_ble_vehicle:` hub block. The helper below makes the
++# hub aware of what the user already declared via a platform block so that
++# auto-created default entities are not duplicated for those keys.
++# =============================================================================
++_PLATFORM_RESERVED_KEYS = {
++    "platform", "id", "tesla_ble_vehicle_id", "update_interval", "interval",
++}
++
++
++def _platform_declared_keys_in(config: dict, domain: str, hub_id=None) -> set:
++    """YAML keys the user declared via `domain: - platform: tesla_ble_vehicle` blocks.
++
++    When `hub_id` (the YAML id string of a TeslaBLEVehicle hub) is given, only
++    platform blocks whose `tesla_ble_vehicle_id` points at that hub are counted -
++    this keeps multi-vehicle setups (two `tesla_ble_vehicle:` hubs) working: a
++    platform entity bound to car A must not suppress car B's auto-entity.
++    """
++    keys = set()
++    for entry in config.get(domain) or []:
++        if isinstance(entry, dict) and entry.get("platform") == "tesla_ble_vehicle":
++            if hub_id is not None:
++                ref = entry.get("tesla_ble_vehicle_id")
++                ref_name = getattr(ref, "id", ref)
++                if ref_name != hub_id:
++                    continue
++            keys |= {
++                key for key in entry
++                if key not in _PLATFORM_RESERVED_KEYS and isinstance(entry[key], dict)
++            }
++    return keys
++
++
++def _platform_declared_keys(domain: str, hub_config: dict) -> set:
++    """Same, read from the full validated config (available at codegen time)."""
++    hub_id = getattr(hub_config.get(CONF_ID), "id", None)
++    return _platform_declared_keys_in(CORE.config or {}, domain, hub_id)
++
++
++def _platform_declared_auto_ids(overrides_map: dict, domain: str, hub_config: dict) -> set:
++    """Map platform-declared YAML keys (in `domain`) to the auto-entity ids they replace."""
++    declared = _platform_declared_keys(domain, hub_config)
++    return {
++        auto_id for user_key, auto_id in overrides_map.items()
++        if auto_id is not None and user_key in declared
++    }
++
++
++def _tesla_ble_vehicle_final_validate(config: ConfigType) -> ConfigType:
++    """Cross-checks that need the *full* validated config.
++
++    Rejects declaring the same entity both as a direct sub-key of the
++    `tesla_ble_vehicle:` hub block AND via a platform block
++    (`binary_sensor/text_sensor/sensor: - platform: tesla_ble_vehicle`) -
++    only one of the two entities would ever receive updates.
++    """
++    full_config = fv.full_config.get()
++    hubs = full_config.get("tesla_ble_vehicle") or []
++    if isinstance(hubs, dict):
++        hubs = [hubs]
++    for hub in hubs:
++        if not isinstance(hub, dict):
++            continue
++        hub_id = getattr(hub.get(CONF_ID), "id", None)
++        for domain, overrides_map in (
++            ("binary_sensor", BINARY_SENSOR_OVERRIDES),
++            ("sensor", SENSOR_OVERRIDES),
++            ("text_sensor", TEXT_SENSOR_OVERRIDES),
++        ):
++            platform_keys = _platform_declared_keys_in(full_config, domain, hub_id)
++            for user_key in overrides_map:
++                if user_key in hub and user_key in platform_keys:
++                    raise cv.Invalid(
++                        f"'{user_key}' is declared both as a sub-key of 'tesla_ble_vehicle:' "
++                        f"and in a '{domain}: - platform: tesla_ble_vehicle' block. "
++                        f"Please declare it in only one of the two places."
++                    )
++    return config
++
++
++FINAL_VALIDATE_SCHEMA = _tesla_ble_vehicle_final_validate
++
++
+ async def to_code(config):
+     var = cg.new_Pvariable(config[CONF_ID])
+     await cg.register_component(var, config)
+@@ -549,24 +655,32 @@
+     cg.add(var.set_role(TESLA_ROLES[config[CONF_ROLE]]))
+     cg.add(var.set_charging_amps_max(config[CONF_CHARGING_AMPS_MAX]))
+ 
+-    vcsec_ms = int(config[CONF_VCSEC_POLL_INTERVAL] * 1000)
++    # NOTE: interval validators accept floats down to 0.2 s (e.g. 3, 2.5, 0.2 are
++    # all valid). int(round(...)) avoids FP truncation (0.29 * 1000 == 289.999...).
++    vcsec_ms = int(round(config[CONF_VCSEC_POLL_INTERVAL] * 1000))
+     cg.add(var.set_update_interval(vcsec_ms))
+     cg.add(var.set_vcsec_poll_interval(vcsec_ms))
+-    cg.add(var.set_infotainment_poll_interval_awake(int(config[CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE] * 1000)))
+-    cg.add(var.set_infotainment_poll_interval_active(int(config[CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE] * 1000)))
+-    cg.add(var.set_infotainment_sleep_timeout(int(config[CONF_INFOTAINMENT_SLEEP_TIMEOUT] * 1000)))
++    cg.add(var.set_infotainment_poll_interval_awake(int(round(config[CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE] * 1000))))
++    cg.add(var.set_infotainment_poll_interval_active(int(round(config[CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE] * 1000))))
++    cg.add(var.set_infotainment_sleep_timeout(int(round(config[CONF_INFOTAINMENT_SLEEP_TIMEOUT] * 1000))))
+ 
+-    # Compute skip sets: which auto entities to skip because user provided a custom one.
++    # Compute skip sets: which auto entities to skip because user provided a custom one
++    # (either as a direct sub-key of this block or via a platform-style declaration).
+     skip_binary = {auto_id for user_key, auto_id in BINARY_SENSOR_OVERRIDES.items()
+                    if auto_id is not None and user_key in config}
++    skip_binary |= _platform_declared_auto_ids(BINARY_SENSOR_OVERRIDES, "binary_sensor", config)
+     skip_sensor = {auto_id for user_key, auto_id in SENSOR_OVERRIDES.items() if user_key in config}
++    skip_sensor |= _platform_declared_auto_ids(SENSOR_OVERRIDES, "sensor", config)
+     skip_text = {auto_id for user_key, auto_id in TEXT_SENSOR_OVERRIDES.items() if user_key in config}
++    skip_text |= _platform_declared_auto_ids(TEXT_SENSOR_OVERRIDES, "text_sensor", config)
+     skip_switch = {auto_id for user_key, auto_id in SWITCH_OVERRIDES.items() if user_key in config}
+     skip_number = {auto_id for user_key, auto_id in NUMBER_OVERRIDES.items() if user_key in config}
+     skip_lock = {auto_id for user_key, auto_id in LOCK_OVERRIDES.items() if user_key in config}
+     skip_cover = {auto_id for user_key, auto_id in COVER_OVERRIDES.items() if user_key in config}
+ 
+-    # Auto-create default entities (skipped if user has provided an override)
++    # Auto-create default entities (skipped if user has provided an override).
++    # These register with user_defined=false, so they can never clobber an
++    # entity that a platform block already registered (codegen order-proof).
+     for definition in BINARY_SENSORS:
+         if definition["id"] not in skip_binary:
+             await create_binary_sensor(var, definition)
+@@ -592,20 +706,22 @@
+             await create_cover(var, definition)
+     await create_climate_entity(var, CLIMATE)
+ 
+-    # User-provided overrides for sensor/binary/text
++    # User-provided overrides for sensor/binary/text (declared as direct sub-keys
++    # of the `tesla_ble_vehicle:` block). Registered with user_defined=true so
++    # they always replace the auto-created entity.
+     for user_key, auto_id in SENSOR_OVERRIDES.items():
+         if user_key in config:
+-            await create_sensor(var, {"id": auto_id}, user_config=config[user_key])
++            await create_sensor(var, {"id": auto_id}, user_config=config[user_key], user_defined=True)
+     # BUGFIX: register the user-provided binary sensor under the AUTO entity id
+     # (auto_id), not the YAML key. The old code used user_key, which broke the
+     # "charging" -> "charger" mapping: the C++ side publishes to "charger", so a
+     # user-defined `charging:` binary sensor was created but never received updates.
+     for user_key, auto_id in BINARY_SENSOR_OVERRIDES.items():
+         if auto_id is not None and user_key in config:
+-            await create_binary_sensor(var, {"id": auto_id}, user_config=config[user_key])
++            await create_binary_sensor(var, {"id": auto_id}, user_config=config[user_key], user_defined=True)
+     for user_key, auto_id in TEXT_SENSOR_OVERRIDES.items():
+         if user_key in config:
+-            await create_text_sensor(var, {"id": auto_id}, user_config=config[user_key])
++            await create_text_sensor(var, {"id": auto_id}, user_config=config[user_key], user_defined=True)
+ 
+     # User-provided switches
+     if "charging_switch" in config:
+Only in esphome-tesla-ble/components/tesla_ble_vehicle: __pycache__
+Only in esphome-tesla-ble/components/tesla_ble_vehicle: binary_sensor.py
+diff -ru '--exclude=.esphome' '--exclude=secrets.yaml' '--exclude=SCHEMA_SCAN_2026.md' esphome-tesla-132-fixed/components/tesla_ble_vehicle/sensor.py esphome-tesla-ble/components/tesla_ble_vehicle/sensor.py
+--- esphome-tesla-132-fixed/components/tesla_ble_vehicle/sensor.py	2026-10-12 10:53:07.031268517 +0000
++++ esphome-tesla-ble/components/tesla_ble_vehicle/sensor.py	2026-10-12 11:50:12.277076952 +0000
+@@ -1,3 +1,26 @@
++"""sensor platform for the tesla_ble_vehicle component.
++
++Allows declaring the vehicle's numeric sensors with the standard ESPHome
++platform syntax, in addition to the direct sub-key syntax under the
++`tesla_ble_vehicle:` hub block:
++
++    sensor:
++      - platform: tesla_ble_vehicle
++        tesla_ble_vehicle_id: tesla_ble_vehicle_id
++        odometer:
++          id: vehicle_odometer
++          name: "Tesla Odometer"
++
++Both syntaxes are fully equivalent - the entity is wired to the hub and
++receives the same state updates. Do not declare the same key in both
++places (this is rejected at config validation time).
++
++NOTE: this file used to create a standalone TeslaBLEVehicleSensor container
++that was never connected to the vehicle state manager, so sensors declared
++this way never received any updates. The container class is still created
++for backward compatibility of `id:` references, but every sensor is now
++registered on the TeslaBLEVehicle hub and receives live data.
++"""
+ import esphome.codegen as cg
+ import esphome.config_validation as cv
+ from esphome.components import sensor
+@@ -23,208 +46,189 @@
+     UNIT_AMPERE,
+     UNIT_KILOWATT_HOURS,
+     UNIT_MINUTE,
+-    UNIT_BAR,
+-    UNIT_MILES_PER_HOUR,
+-    UNIT_MILES,
++    UNIT_SECOND,
+ )
++from esphome.types import ConfigType
++
++from . import TeslaBLEVehicle
+ 
+ DEPENDENCIES = ['tesla_ble_vehicle']
+ 
++CONF_TESLA_BLE_VEHICLE_ID = "tesla_ble_vehicle_id"
++
+ tesla_ble_vehicle_ns = cg.esphome_ns.namespace('tesla_ble_vehicle')
++# Kept for backward compatibility: the platform block itself still gets a
++# component id you can reference, it simply no longer owns the sensors.
+ TeslaBLEVehicleSensor = tesla_ble_vehicle_ns.class_(
+     'TeslaBLEVehicleSensor', cg.PollingComponent
+ )
+ 
+-# 所有支持的传感器键名（与内部 ID 保持一致）
+-CONF_BATTERY_LEVEL = "battery_level"
+-CONF_RANGE = "range"
+-CONF_RANGE_RATED_API = "range_rated_api"
+-CONF_OUTSIDE_TEMP = "outside_temp"
+-CONF_INSIDE_TEMP = "inside_temp"
+-CONF_DRIVER_TEMP_SETTING = "driver_temp_setting"
+-CONF_PASSENGER_TEMP_SETTING = "passenger_temp_setting"
+-CONF_SPEED = "speed"
+-CONF_ODOMETER = "odometer"
+-CONF_CHARGER_POWER = "charger_power"
+-CONF_CHARGER_VOLTAGE = "charger_voltage"
+-CONF_CHARGER_CURRENT = "charger_current"
+-CONF_CHARGING_RATE = "charging_rate"
+-CONF_CHARGE_RATE = "charge_rate"
+-CONF_ENERGY_ADDED = "energy_added"
+-CONF_CHARGE_ENERGY_ADDED = "charge_energy_added"
+-CONF_TIME_TO_FULL = "time_to_full"
+-CONF_TIME_TO_FULL_CHARGE = "time_to_full_charge"
+-CONF_TPMS_FL = "tpms_front_left"
+-CONF_TPMS_FR = "tpms_front_right"
+-CONF_TPMS_RL = "tpms_rear_left"
+-CONF_TPMS_RR = "tpms_rear_right"
+-
+-CONFIG_SCHEMA = cv.Schema({
+-    cv.GenerateID(): cv.declare_id(TeslaBLEVehicleSensor),
+-    cv.Optional(CONF_BATTERY_LEVEL): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_PERCENT,
+-        device_class=DEVICE_CLASS_BATTERY,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=0,
+-    ),
+-    cv.Optional(CONF_RANGE): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_MILES,           # 内部单位是英里
+-        device_class=DEVICE_CLASS_DISTANCE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_RANGE_RATED_API): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_KILOMETER,
+-        device_class=DEVICE_CLASS_DISTANCE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_OUTSIDE_TEMP): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_CELSIUS,
+-        device_class=DEVICE_CLASS_TEMPERATURE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_INSIDE_TEMP): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_CELSIUS,
+-        device_class=DEVICE_CLASS_TEMPERATURE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_DRIVER_TEMP_SETTING): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_CELSIUS,
+-        device_class=DEVICE_CLASS_TEMPERATURE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_PASSENGER_TEMP_SETTING): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_CELSIUS,
+-        device_class=DEVICE_CLASS_TEMPERATURE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_SPEED): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_KILOMETER_PER_HOUR,
+-        device_class=DEVICE_CLASS_SPEED,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_ODOMETER): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_MILES,           # 内部单位英里
+-        device_class=DEVICE_CLASS_DISTANCE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_CHARGER_POWER): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_KILOWATT,
+-        device_class=DEVICE_CLASS_POWER,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_CHARGER_VOLTAGE): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_VOLT,
+-        device_class=DEVICE_CLASS_VOLTAGE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=0,
+-    ),
+-    cv.Optional(CONF_CHARGER_CURRENT): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_AMPERE,
+-        device_class=DEVICE_CLASS_CURRENT,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_CHARGING_RATE): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_MILES_PER_HOUR,
+-        device_class=DEVICE_CLASS_SPEED,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_CHARGE_RATE): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_KILOMETER_PER_HOUR,
+-        device_class=DEVICE_CLASS_SPEED,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_ENERGY_ADDED): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_KILOWATT_HOURS,
+-        device_class=DEVICE_CLASS_ENERGY,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=2,
+-    ),
+-    cv.Optional(CONF_CHARGE_ENERGY_ADDED): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_KILOWATT_HOURS,
+-        device_class=DEVICE_CLASS_ENERGY,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=2,
+-    ),
+-    cv.Optional(CONF_TIME_TO_FULL): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_MINUTE,
+-        device_class=DEVICE_CLASS_DURATION,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=0,
+-    ),
+-    cv.Optional(CONF_TIME_TO_FULL_CHARGE): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_MINUTE,
+-        device_class=DEVICE_CLASS_DURATION,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=0,
+-    ),
+-    cv.Optional(CONF_TPMS_FL): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_BAR,
+-        device_class=DEVICE_CLASS_PRESSURE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_TPMS_FR): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_BAR,
+-        device_class=DEVICE_CLASS_PRESSURE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_TPMS_RL): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_BAR,
+-        device_class=DEVICE_CLASS_PRESSURE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-    cv.Optional(CONF_TPMS_RR): sensor.sensor_schema(
+-        unit_of_measurement=UNIT_BAR,
+-        device_class=DEVICE_CLASS_PRESSURE,
+-        state_class=STATE_CLASS_MEASUREMENT,
+-        accuracy_decimals=1,
+-    ),
+-}).extend(cv.polling_component_schema('60s'))
++# (YAML key, hub auto-entity id) -> sensor schema options.
++# The hub auto-entity id is the key VehicleStateManager publishes to; the
++# legacy aliases "energy_added" and "time_to_full" are mapped onto the live
++# hub ids so they actually receive data.
++SENSOR_KEYS = {
++    "battery_level": (
++        "battery_level",
++        dict(unit_of_measurement=UNIT_PERCENT, device_class=DEVICE_CLASS_BATTERY,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=0),
++    ),
++    "range": (
++        "range",
++        dict(unit_of_measurement="mi", device_class=DEVICE_CLASS_DISTANCE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "range_rated_api": (
++        "range_rated_api",
++        dict(unit_of_measurement=UNIT_KILOMETER, device_class=DEVICE_CLASS_DISTANCE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "outside_temp": (
++        "outside_temp",
++        dict(unit_of_measurement=UNIT_CELSIUS, device_class=DEVICE_CLASS_TEMPERATURE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "inside_temp": (
++        "inside_temp",
++        dict(unit_of_measurement=UNIT_CELSIUS, device_class=DEVICE_CLASS_TEMPERATURE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "driver_temp_setting": (
++        "driver_temp_setting",
++        dict(unit_of_measurement=UNIT_CELSIUS, device_class=DEVICE_CLASS_TEMPERATURE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "passenger_temp_setting": (
++        "passenger_temp_setting",
++        dict(unit_of_measurement=UNIT_CELSIUS, device_class=DEVICE_CLASS_TEMPERATURE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "speed": (
++        "speed",
++        dict(unit_of_measurement=UNIT_KILOMETER_PER_HOUR, device_class=DEVICE_CLASS_SPEED,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "odometer": (
++        "odometer",
++        # update_drive_state() publishes optional_odometer_in_hundredths_of_a_mile / 100, i.e. MILES.
++        dict(unit_of_measurement="mi", device_class=DEVICE_CLASS_DISTANCE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=2),
++    ),
++    "charger_power": (
++        "charger_power",
++        dict(unit_of_measurement=UNIT_KILOWATT, device_class=DEVICE_CLASS_POWER,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "charger_voltage": (
++        "charger_voltage",
++        dict(unit_of_measurement=UNIT_VOLT, device_class=DEVICE_CLASS_VOLTAGE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=0),
++    ),
++    "charger_current": (
++        "charger_current",
++        dict(unit_of_measurement=UNIT_AMPERE, device_class=DEVICE_CLASS_CURRENT,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "charging_rate": (
++        "charging_rate",
++        dict(unit_of_measurement="mph", device_class=DEVICE_CLASS_SPEED,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "charge_rate": (
++        "charge_rate",
++        dict(unit_of_measurement=UNIT_KILOMETER_PER_HOUR, device_class=DEVICE_CLASS_SPEED,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    # Legacy alias kept for backward compatibility; the live hub id is charge_energy_added.
++    "energy_added": (
++        "charge_energy_added",
++        dict(unit_of_measurement=UNIT_KILOWATT_HOURS, device_class=DEVICE_CLASS_ENERGY,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=2),
++    ),
++    "charge_energy_added": (
++        "charge_energy_added",
++        dict(unit_of_measurement=UNIT_KILOWATT_HOURS, device_class=DEVICE_CLASS_ENERGY,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=2),
++    ),
++    # Legacy alias kept for backward compatibility; the live hub id is time_to_full_charge.
++    "time_to_full": (
++        "time_to_full_charge",
++        dict(unit_of_measurement=UNIT_MINUTE, device_class=DEVICE_CLASS_DURATION,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=0),
++    ),
++    "time_to_full_charge": (
++        "time_to_full_charge",
++        dict(unit_of_measurement=UNIT_MINUTE, device_class=DEVICE_CLASS_DURATION,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=0),
++    ),
++    "tpms_front_left": (
++        "tpms_front_left",
++        dict(unit_of_measurement="bar", device_class=DEVICE_CLASS_PRESSURE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "tpms_front_right": (
++        "tpms_front_right",
++        dict(unit_of_measurement="bar", device_class=DEVICE_CLASS_PRESSURE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "tpms_rear_left": (
++        "tpms_rear_left",
++        dict(unit_of_measurement="bar", device_class=DEVICE_CLASS_PRESSURE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    "tpms_rear_right": (
++        "tpms_rear_right",
++        dict(unit_of_measurement="bar", device_class=DEVICE_CLASS_PRESSURE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=1),
++    ),
++    # --- Migrated from PedroKTFC/esphome-tesla-ble ---
++    "max_soc": (
++        "max_soc",
++        dict(unit_of_measurement=UNIT_PERCENT, device_class=DEVICE_CLASS_BATTERY,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=0),
++    ),
++    "max_amps": (
++        "max_amps",
++        dict(unit_of_measurement=UNIT_AMPERE, device_class=DEVICE_CLASS_CURRENT,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=0),
++    ),
++    "charge_distance_added": (
++        "charge_distance_added",
++        dict(unit_of_measurement="mi", device_class=DEVICE_CLASS_DISTANCE,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=2),
++    ),
++    "charger_phases": (
++        "charger_phases",
++        dict(accuracy_decimals=0),
++    ),
++    "ble_disconnected_time": (
++        "ble_disconnected_time",
++        dict(unit_of_measurement=UNIT_SECOND, device_class=DEVICE_CLASS_DURATION,
++             state_class=STATE_CLASS_MEASUREMENT, accuracy_decimals=0),
++    ),
++}
++
++CONFIG_SCHEMA = cv.Schema(
++    {
++        cv.GenerateID(): cv.declare_id(TeslaBLEVehicleSensor),
++        cv.Required(CONF_TESLA_BLE_VEHICLE_ID): cv.use_id(TeslaBLEVehicle),
++    }
++).extend(
++    {
++        cv.Optional(key): sensor.sensor_schema(**options)
++        for key, (_, options) in SENSOR_KEYS.items()
++    }
++).extend(cv.polling_component_schema('60s'))
+ 
+-async def to_code(config):
++
++async def to_code(config: ConfigType) -> None:
++    # Backward-compatible container component (its update() is a no-op).
+     var = cg.new_Pvariable(config[CONF_ID])
+     await cg.register_component(var, config)
+ 
+-    # 直接映射配置键到 setter 方法
+-    sensor_map = {
+-        CONF_BATTERY_LEVEL: "set_battery_level_sensor",
+-        CONF_RANGE: "set_range_sensor",
+-        CONF_RANGE_RATED_API: "set_range_rated_api_sensor",
+-        CONF_OUTSIDE_TEMP: "set_outside_temp_sensor",
+-        CONF_INSIDE_TEMP: "set_inside_temp_sensor",
+-        CONF_DRIVER_TEMP_SETTING: "set_driver_temp_setting_sensor",
+-        CONF_PASSENGER_TEMP_SETTING: "set_passenger_temp_setting_sensor",
+-        CONF_SPEED: "set_speed_sensor",
+-        CONF_ODOMETER: "set_odometer_sensor",
+-        CONF_CHARGER_POWER: "set_charger_power_sensor",
+-        CONF_CHARGER_VOLTAGE: "set_charger_voltage_sensor",
+-        CONF_CHARGER_CURRENT: "set_charger_current_sensor",
+-        CONF_CHARGING_RATE: "set_charging_rate_sensor",
+-        CONF_CHARGE_RATE: "set_charge_rate_sensor",
+-        CONF_ENERGY_ADDED: "set_energy_added_sensor",
+-        CONF_CHARGE_ENERGY_ADDED: "set_charge_energy_added_sensor",
+-        CONF_TIME_TO_FULL: "set_time_to_full_sensor",
+-        CONF_TIME_TO_FULL_CHARGE: "set_time_to_full_charge_sensor",
+-        CONF_TPMS_FL: "set_tpms_fl_sensor",
+-        CONF_TPMS_FR: "set_tpms_fr_sensor",
+-        CONF_TPMS_RL: "set_tpms_rl_sensor",
+-        CONF_TPMS_RR: "set_tpms_rr_sensor",
+-    }
+-    for key, setter in sensor_map.items():
++    hub = await cg.get_variable(config[CONF_TESLA_BLE_VEHICLE_ID])
++    for key, (auto_id, _) in SENSOR_KEYS.items():
+         if key in config:
+             sens = await sensor.new_sensor(config[key])
+-            cg.add(getattr(var, setter)(sens))
++            # user_defined=True: always wins over the auto-created internal entity.
++            cg.add(hub.set_sensor(auto_id, sens, True))
+diff -ru '--exclude=.esphome' '--exclude=secrets.yaml' '--exclude=SCHEMA_SCAN_2026.md' esphome-tesla-132-fixed/components/tesla_ble_vehicle/tesla_ble_vehicle.cpp esphome-tesla-ble/components/tesla_ble_vehicle/tesla_ble_vehicle.cpp
+--- esphome-tesla-132-fixed/components/tesla_ble_vehicle/tesla_ble_vehicle.cpp	2026-10-12 10:53:53.975571040 +0000
++++ esphome-tesla-ble/components/tesla_ble_vehicle/tesla_ble_vehicle.cpp	2026-10-12 11:44:07.786787745 +0000
+@@ -143,9 +143,30 @@
+ void TeslaBLEVehicle::set_infotainment_poll_interval_active(uint32_t interval_ms) { infotainment_poll_interval_active_ = interval_ms; }
+ void TeslaBLEVehicle::set_infotainment_sleep_timeout(uint32_t interval_ms) { infotainment_sleep_timeout_ = interval_ms; }
+ 
+-void TeslaBLEVehicle::set_binary_sensor(const std::string &id, binary_sensor::BinarySensor *sensor) { pending_binary_sensors_[id] = sensor; if (state_manager_) state_manager_->set_binary_sensor(id, sensor); }
+-void TeslaBLEVehicle::set_sensor(const std::string &id, sensor::Sensor *sensor) { pending_sensors_[id] = sensor; if (state_manager_) state_manager_->set_sensor(id, sensor); }
+-void TeslaBLEVehicle::set_text_sensor(const std::string &id, text_sensor::TextSensor *sensor) { pending_text_sensors_[id] = sensor; if (state_manager_) state_manager_->set_text_sensor(id, sensor); }
++// Entity registration with "user wins" semantics (see tesla_ble_vehicle.h).
++// Auto-created default entities (user_defined == false) never clobber an
++// already-registered entity for the same key; user-declared entities always
++// take precedence. This keeps behaviour correct no matter in which order
++// ESPHome's code generator emits the hub's auto-creation and the user's
++// platform-block registration.
++void TeslaBLEVehicle::set_binary_sensor(const std::string &id, binary_sensor::BinarySensor *sensor, bool user_defined) {
++  if (sensor == nullptr) return;
++  if (!user_defined && pending_binary_sensors_.find(id) != pending_binary_sensors_.end()) return;
++  pending_binary_sensors_[id] = sensor;
++  if (state_manager_) state_manager_->set_binary_sensor(id, sensor);
++}
++void TeslaBLEVehicle::set_sensor(const std::string &id, sensor::Sensor *sensor, bool user_defined) {
++  if (sensor == nullptr) return;
++  if (!user_defined && pending_sensors_.find(id) != pending_sensors_.end()) return;
++  pending_sensors_[id] = sensor;
++  if (state_manager_) state_manager_->set_sensor(id, sensor);
++}
++void TeslaBLEVehicle::set_text_sensor(const std::string &id, text_sensor::TextSensor *sensor, bool user_defined) {
++  if (sensor == nullptr) return;
++  if (!user_defined && pending_text_sensors_.find(id) != pending_text_sensors_.end()) return;
++  pending_text_sensors_[id] = sensor;
++  if (state_manager_) state_manager_->set_text_sensor(id, sensor);
++}
+ 
+ void TeslaBLEVehicle::set_charging_switch(switch_::Switch *sw) { pending_charging_switch_ = sw; if (state_manager_) state_manager_->set_charging_switch(sw); }
+ void TeslaBLEVehicle::set_steering_wheel_heat_switch(switch_::Switch *sw) { pending_steering_wheel_heat_switch_ = sw; if (state_manager_) state_manager_->set_steering_wheel_heat_switch(sw); }
+diff -ru '--exclude=.esphome' '--exclude=secrets.yaml' '--exclude=SCHEMA_SCAN_2026.md' esphome-tesla-132-fixed/components/tesla_ble_vehicle/tesla_ble_vehicle.h esphome-tesla-ble/components/tesla_ble_vehicle/tesla_ble_vehicle.h
+--- esphome-tesla-132-fixed/components/tesla_ble_vehicle/tesla_ble_vehicle.h	2026-10-12 10:54:04.139636574 +0000
++++ esphome-tesla-ble/components/tesla_ble_vehicle/tesla_ble_vehicle.h	2026-10-12 11:43:53.471697646 +0000
+@@ -55,9 +55,15 @@
+     void set_infotainment_poll_interval_active(uint32_t interval_ms);
+     void set_infotainment_sleep_timeout(uint32_t interval_ms);
+ 
+-    void set_binary_sensor(const std::string& id, binary_sensor::BinarySensor* sensor);
+-    void set_sensor(const std::string& id, sensor::Sensor* sensor);
+-    void set_text_sensor(const std::string& id, text_sensor::TextSensor* sensor);
++    // Entity registration. `user_defined` marks entities declared by the user
++    // (either as a direct sub-key of `tesla_ble_vehicle:` or via a
++    // `binary_sensor/text_sensor/sensor: - platform: tesla_ble_vehicle` block).
++    // Auto-created default entities never overwrite an entity that is already
++    // registered for the same key, so a user-defined entity always "wins"
++    // regardless of ESPHome code-generation ordering.
++    void set_binary_sensor(const std::string& id, binary_sensor::BinarySensor* sensor, bool user_defined = false);
++    void set_sensor(const std::string& id, sensor::Sensor* sensor, bool user_defined = false);
++    void set_text_sensor(const std::string& id, text_sensor::TextSensor* sensor, bool user_defined = false);
+ 
+     void set_charging_switch(switch_::Switch *sw);
+     void set_steering_wheel_heat_switch(switch_::Switch *sw);
+Only in esphome-tesla-ble/components/tesla_ble_vehicle: text_sensor.py
+diff -ru '--exclude=.esphome' '--exclude=secrets.yaml' '--exclude=SCHEMA_SCAN_2026.md' esphome-tesla-132-fixed/packages/client.yml esphome-tesla-ble/packages/client.yml
+--- esphome-tesla-132-fixed/packages/client.yml	2026-10-12 10:54:20.404741368 +0000
++++ esphome-tesla-ble/packages/client.yml	2026-10-12 12:01:43.606186475 +0000
+@@ -21,7 +21,8 @@
+   charging_amps_max: $charging_amps_max
+   role: DRIVER  # Options: DRIVER (all controls) or CHARGING_MANAGER (charging + basic controls only)
+   
+-  # Polling intervals (in seconds) - adjust based on your battery life vs responsiveness needs
++  # Polling intervals (in seconds; floats allowed, minimum 0.2 - e.g. 3, 2.5 and 0.2 are all valid)
++  # - adjust based on your battery life vs responsiveness needs
+   vcsec_poll_interval: $vcsec_poll_interval        # Vehicle status polling (also sets ESPHome update_interval)
+   infotainment_poll_interval_awake: $infotainment_poll_interval_awake    # Data polling when awake but not active
+   infotainment_poll_interval_active: $infotainment_poll_interval_active # Data polling when charging/unlocked/user present (more responsive)
+@@ -133,4 +134,28 @@
+   - platform: ble_client
+     ble_client_id: ble_tesla_id
+     name: "BLE Connection"
+-    entity_category: diagnostic
+\ No newline at end of file
++    entity_category: diagnostic
++
++# ---------------------------------------------------------------------------
++# ALTERNATIVE SYNTAX: the same entities can also be declared with standard
++# ESPHome platform blocks instead of the direct sub-keys above. Both styles
++# are equivalent; do not declare the same key in both places (config will
++# fail validation with a clear error). Example (equivalent to `locked:` and
++# `user_present:` above, plus shift_state as a text sensor):
++#
++# binary_sensor:
++#   - platform: tesla_ble_vehicle
++#     tesla_ble_vehicle_id: tesla_ble_vehicle_id
++#     locked:
++#       id: vehicle_locked
++#       name: "Tesla Vehicle Locked State"
++#     user_present:
++#       id: vehicle_user_present
++#       name: "Tesla User Presence"
++#
++# text_sensor:
++#   - platform: tesla_ble_vehicle
++#     tesla_ble_vehicle_id: tesla_ble_vehicle_id
++#     shift_state:
++#       id: vehicle_shift_state
++#       name: "Tesla Shift State"

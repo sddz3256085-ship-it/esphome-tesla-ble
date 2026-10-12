@@ -1,0 +1,194 @@
+diff -ru "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/components/tesla_ble_vehicle/__init__.py" ./components/tesla_ble_vehicle/__init__.py
+--- "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/components/tesla_ble_vehicle/__init__.py"	2026-10-12 10:17:03.314966435 +0000
++++ ./components/tesla_ble_vehicle/__init__.py	2026-10-12 10:53:37.507464788 +0000
+@@ -116,7 +116,7 @@
+ 
+ SENSORS = [
+     {"id": "battery_level", "name": "Battery", "icon": "mdi:battery", "unit": "%", "internal": True},
+-    {"id": "range", "name": "Range", "icon": "mdi:map-marker-distance", "device_class": "distance", "unit": "mi", "internal": True},
++    {"id": "range", "name": "Range", "icon": "mdi:map-marker-distance", "device_class": "distance", "unit": "mi", "accuracy_decimals": 2, "internal": True},
+     {"id": "charger_power", "name": "Charger Power", "icon": "mdi:flash", "device_class": "power", "unit": "kW", "internal": True},
+     {"id": "charger_voltage", "name": "Charger Voltage", "icon": "mdi:lightning-bolt", "device_class": "voltage", "unit": "V", "internal": True},
+     {"id": "charger_current", "name": "Charger Current", "icon": "mdi:current-ac", "device_class": "current", "unit": "A", "internal": True},
+@@ -128,7 +128,7 @@
+     # NOTE: id fixed from "time_to_full" -> "time_to_full_charge" for the same reason as above.
+     {"id": "time_to_full_charge", "name": "Time to Full", "icon": "mdi:clock-outline", "device_class": "duration", "unit": "min", "internal": True},
+     {"id": "outside_temp", "name": "Outside Temperature", "icon": "mdi:thermometer", "device_class": "temperature", "unit": "°C", "accuracy_decimals": 1, "internal": True},
+-    {"id": "odometer", "name": "Odometer", "icon": "mdi:counter", "device_class": "distance", "unit": "mi", "disabled_by_default": True, "internal": True},
++    {"id": "odometer", "name": "Odometer", "icon": "mdi:counter", "device_class": "distance", "unit": "mi", "accuracy_decimals": 2, "disabled_by_default": True, "internal": True},
+     {"id": "tpms_front_left", "name": "TPMS Front Left", "icon": "mdi:car-tire-alert", "device_class": "pressure", "unit": "bar", "accuracy_decimals": 1, "internal": True},
+     {"id": "tpms_front_right", "name": "TPMS Front Right", "icon": "mdi:car-tire-alert", "device_class": "pressure", "unit": "bar", "accuracy_decimals": 1, "internal": True},
+     {"id": "tpms_rear_left", "name": "TPMS Rear Left", "icon": "mdi:car-tire-alert", "device_class": "pressure", "unit": "bar", "accuracy_decimals": 1, "internal": True},
+@@ -136,7 +136,7 @@
+     # --- Migrated from PedroKTFC/esphome-tesla-ble ---
+     {"id": "max_soc", "name": "Charge limit", "icon": "mdi:battery-lock", "device_class": "battery", "unit": "%", "accuracy_decimals": 0, "internal": True},
+     {"id": "max_amps", "name": "Current limit", "icon": "mdi:current-ac", "device_class": "current", "unit": "A", "accuracy_decimals": 0, "internal": True},
+-    {"id": "charge_distance_added", "name": "Charge distance added", "icon": "mdi:map-marker-distance", "device_class": "distance", "unit": "mi", "accuracy_decimals": 1, "internal": True},
++    {"id": "charge_distance_added", "name": "Charge distance added", "icon": "mdi:map-marker-distance", "device_class": "distance", "unit": "mi", "accuracy_decimals": 2, "internal": True},
+     {"id": "charger_phases", "name": "Charger phases", "icon": "mdi:current-ac", "accuracy_decimals": 0, "disabled_by_default": True, "internal": True},
+     {"id": "charge_rate", "name": "Charge rate", "icon": "mdi:speedometer", "device_class": "speed", "unit": "km/h", "accuracy_decimals": 1, "disabled_by_default": True, "internal": True},
+     {"id": "ble_disconnected_time", "name": "BLE disconnected time", "icon": "mdi:bluetooth-off", "device_class": "duration", "unit": "s", "disabled_by_default": True, "entity_category": "diagnostic", "internal": True},
+@@ -202,14 +202,19 @@
+             cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_AWAKE, default=30.0): cv.float_range(min=0.2, max=600.0),
+             cv.Optional(CONF_INFOTAINMENT_POLL_INTERVAL_ACTIVE, default=10.0): cv.float_range(min=0.2, max=120.0),
+             cv.Optional(CONF_INFOTAINMENT_SLEEP_TIMEOUT, default=660.0): cv.float_range(min=0.2, max=3600.0),
+-            cv.Optional("battery_level"): sensor.sensor_schema(unit_of_measurement="%", accuracy_decimals=0),
+-            cv.Optional("range"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=0), 
++            cv.Optional("battery_level"): sensor.sensor_schema(unit_of_measurement="%", device_class="battery", accuracy_decimals=0),
++            # NOTE: accuracy_decimals 0 -> 2 (PedroKTFC parity: battery_range is a float with 2 decimals).
++            cv.Optional("range"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=2), 
+             cv.Optional("range_rated_api"): sensor.sensor_schema(unit_of_measurement="km", accuracy_decimals=1),
+             cv.Optional("inside_temp"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
+             cv.Optional("outside_temp"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
+             cv.Optional("driver_temp_setting"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
+             cv.Optional("passenger_temp_setting"): sensor.sensor_schema(unit_of_measurement="°C", device_class="temperature", accuracy_decimals=1),
+-            cv.Optional("odometer"): sensor.sensor_schema(unit_of_measurement="km", device_class="distance", accuracy_decimals=1),
++            # BUGFIX: unit "km" -> "mi". update_drive_state() publishes
++            # optional_odometer_in_hundredths_of_a_mile / 100, i.e. MILES. The old "km"
++            # default made the user-overridden odometer entity show a value that was
++            # off by a factor of 1.609. accuracy_decimals 1 -> 2 for PedroKTFC parity.
++            cv.Optional("odometer"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=2),
+             cv.Optional("speed"): sensor.sensor_schema(unit_of_measurement="km/h", device_class="speed", accuracy_decimals=1),
+             cv.Optional("charge_energy_added"): sensor.sensor_schema(unit_of_measurement="kWh", device_class="energy", accuracy_decimals=2),
+             cv.Optional("charge_rate"): sensor.sensor_schema(unit_of_measurement="km/h", device_class="speed", accuracy_decimals=1),
+@@ -225,12 +230,16 @@
+             # --- Migrated from PedroKTFC/esphome-tesla-ble ---
+             cv.Optional("max_soc"): sensor.sensor_schema(unit_of_measurement="%", device_class="battery", accuracy_decimals=0),
+             cv.Optional("max_amps"): sensor.sensor_schema(unit_of_measurement="A", device_class="current", accuracy_decimals=0),
+-            cv.Optional("charge_distance_added"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=1),
++            cv.Optional("charge_distance_added"): sensor.sensor_schema(unit_of_measurement="mi", device_class="distance", accuracy_decimals=2),
+             cv.Optional("charger_phases"): sensor.sensor_schema(accuracy_decimals=0),
+             cv.Optional("ble_disconnected_time"): sensor.sensor_schema(unit_of_measurement="s", device_class="duration", accuracy_decimals=0),
+             cv.Optional("locked"): binary_sensor.binary_sensor_schema(device_class="lock"),
+-            cv.Optional("user_present"): binary_sensor.binary_sensor_schema(device_class="presence"),
+-            cv.Optional("charge_flap_open"): binary_sensor.binary_sensor_schema(device_class="opening"),
++            # NOTE: device_class "presence" -> "occupancy" so the user-override schema
++            # matches both the auto-created entity and Pedro's original is_user_present.
++            cv.Optional("user_present"): binary_sensor.binary_sensor_schema(device_class="occupancy"),
++            # NOTE: device_class "opening" -> "door" so the user-override schema matches
++            # both the auto-created entity and Pedro's original is_charge_flap_open.
++            cv.Optional("charge_flap_open"): binary_sensor.binary_sensor_schema(device_class="door"),
+             cv.Optional("boot_open"): binary_sensor.binary_sensor_schema(device_class="door"),
+             cv.Optional("frunk_open"): binary_sensor.binary_sensor_schema(device_class="door"),
+             cv.Optional("windows_state"): binary_sensor.binary_sensor_schema(device_class="window"),
+@@ -469,8 +478,9 @@
+     "max_amps": "max_amps",
+     "charge_distance_added": "charge_distance_added",
+     "charger_phases": "charger_phases",
+-    "charge_rate": "charge_rate",
+     "ble_disconnected_time": "ble_disconnected_time",
++    # NOTE: the duplicate "charge_rate": "charge_rate" entry that used to sit here
++    # was removed - a Python dict literal silently keeps only the last duplicate key.
+ }
+ 
+ BINARY_SENSOR_OVERRIDES = {
+@@ -586,12 +596,16 @@
+     for user_key, auto_id in SENSOR_OVERRIDES.items():
+         if user_key in config:
+             await create_sensor(var, {"id": auto_id}, user_config=config[user_key])
++    # BUGFIX: register the user-provided binary sensor under the AUTO entity id
++    # (auto_id), not the YAML key. The old code used user_key, which broke the
++    # "charging" -> "charger" mapping: the C++ side publishes to "charger", so a
++    # user-defined `charging:` binary sensor was created but never received updates.
+     for user_key, auto_id in BINARY_SENSOR_OVERRIDES.items():
+-        if user_key in config:
+-            await create_binary_sensor(var, {"id": user_key}, user_config=config[user_key])
++        if auto_id is not None and user_key in config:
++            await create_binary_sensor(var, {"id": auto_id}, user_config=config[user_key])
+     for user_key, auto_id in TEXT_SENSOR_OVERRIDES.items():
+         if user_key in config:
+-            await create_text_sensor(var, {"id": user_key}, user_config=config[user_key])
++            await create_text_sensor(var, {"id": auto_id}, user_config=config[user_key])
+ 
+     # User-provided switches
+     if "charging_switch" in config:
+diff -ru "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/components/tesla_ble_vehicle/tesla_ble_vehicle.cpp" ./components/tesla_ble_vehicle/tesla_ble_vehicle.cpp
+--- "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/components/tesla_ble_vehicle/tesla_ble_vehicle.cpp"	2026-10-12 10:19:37.566242996 +0000
++++ ./components/tesla_ble_vehicle/tesla_ble_vehicle.cpp	2026-10-12 10:53:53.975571040 +0000
+@@ -33,6 +33,12 @@
+ void TeslaBLEVehicle::setup() {
+   ESP_LOGCONFIG(TAG, "Setting up TeslaBLEVehicle");
+   initialize_ble_uuids();
++  // Migrated from PedroKTFC/esphome-tesla-ble: start the "ble_disconnected_time"
++  // clock at boot (Pedro: "ble_disconnected_time_ = millis(); // Initialise
++  // disconnect time on startup"). Without this the sensor stayed "unknown" forever
++  // when the vehicle was never in range since power-on; now it reports how long
++  // the link has been down, counting from boot until the first connection.
++  ble_disconnected_since_ = millis();
+   initialize_managers();
+   configure_pending_sensors();
+   if (vin_.empty()) { ESP_LOGE(TAG, "VIN not configured"); this->status_set_warning("VIN not configured"); return; }
+diff -ru "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/components/tesla_ble_vehicle/tesla_ble_vehicle.h" ./components/tesla_ble_vehicle/tesla_ble_vehicle.h
+--- "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/components/tesla_ble_vehicle/tesla_ble_vehicle.h"	2026-10-12 10:18:05.387198199 +0000
++++ ./components/tesla_ble_vehicle/tesla_ble_vehicle.h	2026-10-12 10:54:04.139636574 +0000
+@@ -145,8 +145,10 @@
+     uint32_t last_infotainment_poll_{0};
+ 
+     // Migrated from PedroKTFC/esphome-tesla-ble: timestamp (millis()) the BLE link was lost,
+-    // 0 while connected. Drives the "ble_disconnected_time" sensor, see update() in
+-    // tesla_ble_vehicle.cpp and VehicleStateManager::update_ble_disconnected_seconds().
++    // 0 while connected. Initialised to millis() in setup() (like Pedro does) so the
++    // "ble_disconnected_time" sensor counts from boot when the car is out of range.
++    // Drives that sensor - see update() in tesla_ble_vehicle.cpp and
++    // VehicleStateManager::update_ble_disconnected_seconds().
+     uint32_t ble_disconnected_since_{0};
+ 
+     espbt::ESPBTUUID service_uuid_;
+diff -ru "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/components/tesla_ble_vehicle/vehicle_state_manager.cpp" ./components/tesla_ble_vehicle/vehicle_state_manager.cpp
+--- "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/components/tesla_ble_vehicle/vehicle_state_manager.cpp"	2026-10-12 10:18:01.465063798 +0000
++++ ./components/tesla_ble_vehicle/vehicle_state_manager.cpp	2026-10-12 10:53:45.869518748 +0000
+@@ -434,9 +434,12 @@
+     }
+     // Migrated from PedroKTFC/esphome-tesla-ble: "windows_state" aggregate binary sensor,
+     // in addition to the per-window binary sensors and the Windows Cover entity above.
+-    if (closures_state.which_optional_window_open_driver_front ||
+-        closures_state.which_optional_window_open_driver_rear ||
+-        closures_state.which_optional_window_open_passenger_front ||
++    // BUGFIX: only publish when ALL FOUR window fields are present in the message
++    // (Pedro's original logic). Publishing on partial data could report "all windows
++    // closed" when the not-reported windows were actually open.
++    if (closures_state.which_optional_window_open_driver_front &&
++        closures_state.which_optional_window_open_driver_rear &&
++        closures_state.which_optional_window_open_passenger_front &&
+         closures_state.which_optional_window_open_passenger_rear) {
+         publish_binary_sensor("windows_state", any_window_open);
+     }
+diff -ru "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/packages/board.yml" ./packages/board.yml
+--- "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/packages/board.yml"	2026-10-12 10:15:41.448117944 +0000
++++ ./packages/board.yml	2026-10-12 10:54:12.216688629 +0000
+@@ -7,4 +7,11 @@
+     components:
+       - name: tesla-ble
+         source: https://github.com/13210986088/tesla-ble.git
+-        ref: v5.0.3
++        # BUGFIX: the repo 13210986088/tesla-ble has NO v5.0.3 tag/branch
++        # (verified: `git fetch origin v5.0.3` -> "couldn't find remote ref"),
++        # so any build from a clean cache failed at dependency fetch time.
++        # Pinned instead to the exact commit that the version-5.0.3 manifest
++        # on main points at (2026-05-03, "Update vehicle.cpp"). If you own the
++        # tesla-ble repo, re-creating the v5.0.3 tag at 04a1b0d and reverting
++        # this line to `ref: v5.0.3` is the cleanest long-term fix.
++        ref: 04a1b0dc6369b786ec961b0fcc070ab451bb4e48
+diff -ru "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/packages/client.yml" ./packages/client.yml
+--- "/home/z/my-project/upload/extracted/\344\277\256\346\224\271\345\272\223/final/esphome-tesla-32-main/packages/client.yml"	2026-10-12 10:21:29.642198363 +0000
++++ ./packages/client.yml	2026-10-12 10:54:20.404741368 +0000
+@@ -75,7 +75,18 @@
+   tpms_rear_left: { id: tpms_pressure_rl, name: "Tyre pressure rear left", disabled_by_default: true }     # <- Pedro: tpms_pressure_rl
+   tpms_rear_right: { id: tpms_pressure_rr, name: "Tyre pressure rear right", disabled_by_default: true }   # <- Pedro: tpms_pressure_rr
+   ble_disconnected_time: { id: ble_disconnected_time, name: "BLE disconnected time", disabled_by_default: true, entity_category: diagnostic } # <- Pedro: ble_disconnected_time
+-  charger_phases: { id: charger_phases, name: "Charger phases", disabled_by_default: true }  # <- Pedro: charger_phases
++  # <- Pedro: charger_phases. Pedro's original client.yml maps the raw protocol value 2
++  # to 3 (some firmwares report "2" while actually charging 3-phase); kept here 1:1
++  # because the "Charge power calculated" template sensor below multiplies by this.
++  charger_phases:
++    id: charger_phases
++    name: "Charger phases"
++    disabled_by_default: true
++    filters:
++      - lambda: |-
++          if (x == 2)
++            return 3;
++          return x;
+   charge_rate: { id: charge_rate, name: "Charge rate", disabled_by_default: true }   # <- Pedro: charge_rate
+   driver_temp_setting: { id: driver_temp, name: "Climate temperature", disabled_by_default: true } # <- Pedro: driver_temp
+ 

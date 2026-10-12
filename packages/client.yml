@@ -1,0 +1,161 @@
+substitutions:
+  ble_mac_address: !secret ble_mac_address
+  tesla_vin: !secret tesla_vin
+  charging_amps_max: "32"
+  # Polling interval defaults (can be overridden in main config)
+  vcsec_poll_interval: "10"
+  infotainment_poll_interval_awake: "30" 
+  infotainment_poll_interval_active: "10"
+  infotainment_sleep_timeout: "660"  # 11 minutes
+
+ble_client:
+  - mac_address: $ble_mac_address
+    id: ble_tesla_id
+
+# Tesla BLE Vehicle - automatically creates all entities based on role
+tesla_ble_vehicle:
+  ble_client_id: ble_tesla_id
+  id: tesla_ble_vehicle_id
+  vin: $tesla_vin
+  # update_interval is automatically set to match vcsec_poll_interval
+  charging_amps_max: $charging_amps_max
+  role: DRIVER  # Options: DRIVER (all controls) or CHARGING_MANAGER (charging + basic controls only)
+  
+  # Polling intervals (in seconds; floats allowed, minimum 0.2 - e.g. 3, 2.5 and 0.2 are all valid)
+  # - adjust based on your battery life vs responsiveness needs
+  vcsec_poll_interval: $vcsec_poll_interval        # Vehicle status polling (also sets ESPHome update_interval)
+  infotainment_poll_interval_awake: $infotainment_poll_interval_awake    # Data polling when awake but not active
+  infotainment_poll_interval_active: $infotainment_poll_interval_active # Data polling when charging/unlocked/user present (more responsive)
+  infotainment_sleep_timeout: $infotainment_sleep_timeout  # How long to poll before allowing sleep
+
+  # ==========================================================================
+  # Migrated from PedroKTFC/esphome-tesla-ble: the 34 sensors that were listed
+  # explicitly under that project's `tesla_ble_vehicle:` block.
+  #
+  # Unlike Pedro's library, sddz's component auto-*creates* every one of these
+  # internally regardless of what's written here (that's what "automatically
+  # creates all entities based on role" above means) - but it only *exposes*
+  # an entity to Home Assistant once you give it a key here. So, to reach
+  # parity with Pedro's 34 visible sensors, each one is listed below with the
+  # same name Pedro used. Remove any line you don't want exposed.
+  # ==========================================================================
+  # NOTE: the key on the left is sddz's own CONFIG_SCHEMA option name (it does NOT
+  # match Pedro's key names 1:1 - e.g. Pedro's "is_asleep" is sddz's "asleep").
+  # The "# <- Pedro: ..." comments map each line back to the original Pedro key.
+  asleep: { id: asleep, name: "Asleep" }                                            # <- Pedro: is_asleep
+  user_present: { id: user_present, name: "User presence" }                         # <- Pedro: is_user_present
+  locked: { id: locked, name: "Doors" }                                             # <- Pedro: is_unlocked
+  charge_flap_open: { id: charge_flap_open, name: "Charge flap" }                   # <- Pedro: is_charge_flap_open
+  boot_open: { id: boot_open, name: "Boot" }                                        # <- Pedro: is_boot_open
+  frunk_open: { id: frunk_open, name: "Frunk" }                                     # <- Pedro: is_frunk_open
+  shift_state: { id: shift_state, name: "Shift state", disabled_by_default: true }  # <- Pedro: shift_state
+  defrost_state: { id: defrost_state, name: "Defrost state", disabled_by_default: true } # <- Pedro: defrost_state
+  battery_level: { id: charge_state, name: "Charge level" }                         # <- Pedro: charge_state
+  odometer: { id: odometer, name: "Odometer" }                                      # <- Pedro: odometer
+  charger_current: { id: charge_current, name: "Charge current" }                   # <- Pedro: charge_current
+  charger_voltage: { id: charge_voltage, name: "Charge voltage" }                   # <- Pedro: charge_voltage
+  charger_power: { id: charge_power, name: "Charge power" }                         # <- Pedro: charge_power
+  charge_energy_added: { id: charge_energy_added, name: "Charge energy added" }     # <- Pedro: charge_energy_added
+  charge_distance_added: { id: charge_distance_added, name: "Charge distance added" } # <- Pedro: charge_distance_added
+  max_soc: { id: max_soc, name: "Charge limit" }                                    # <- Pedro: max_soc
+  max_amps: { id: max_amps, name: "Current limit" }                                 # <- Pedro: max_amps
+  time_to_full_charge: { id: mins_to_limit, name: "Minutes to limit" }              # <- Pedro: mins_to_limit
+  range: { id: battery_range, name: "Range" }                                       # <- Pedro: battery_range
+  charging_state: { id: charging_state, name: "Charging state" }                    # <- Pedro: charging_state
+  charge_port_latch_state: { id: charge_port_latch_state, name: "Charge port latch state", disabled_by_default: true } # <- Pedro: charge_port_latch_state
+  # "last_update" from Pedro's library is intentionally NOT migrated: it was a
+  # text sensor holding a timestamp of the last successful poll. Every Home
+  # Assistant entity already tracks this natively (its "Last Updated"/"Last
+  # Changed" attributes), so re-publishing it as another entity is redundant.
+  climate_on: { id: is_climate_on, name: "Climate" }                                # <- Pedro: is_climate_on
+  inside_temp: { id: internal_temp, name: "Interior" }                              # <- Pedro: internal_temp
+  outside_temp: { id: external_temp, name: "Exterior" }                             # <- Pedro: external_temp
+  windows_state: { id: windows_state, name: "Windows" }                             # <- Pedro: windows_state
+  tpms_front_left: { id: tpms_pressure_fl, name: "Tyre pressure front left", disabled_by_default: true }   # <- Pedro: tpms_pressure_fl
+  tpms_front_right: { id: tpms_pressure_fr, name: "Tyre pressure front right", disabled_by_default: true } # <- Pedro: tpms_pressure_fr
+  tpms_rear_left: { id: tpms_pressure_rl, name: "Tyre pressure rear left", disabled_by_default: true }     # <- Pedro: tpms_pressure_rl
+  tpms_rear_right: { id: tpms_pressure_rr, name: "Tyre pressure rear right", disabled_by_default: true }   # <- Pedro: tpms_pressure_rr
+  ble_disconnected_time: { id: ble_disconnected_time, name: "BLE disconnected time", disabled_by_default: true, entity_category: diagnostic } # <- Pedro: ble_disconnected_time
+  # <- Pedro: charger_phases. Pedro's original client.yml maps the raw protocol value 2
+  # to 3 (some firmwares report "2" while actually charging 3-phase); kept here 1:1
+  # because the "Charge power calculated" template sensor below multiplies by this.
+  charger_phases:
+    id: charger_phases
+    name: "Charger phases"
+    disabled_by_default: true
+    filters:
+      - lambda: |-
+          if (x == 2)
+            return 3;
+          return x;
+  charge_rate: { id: charge_rate, name: "Charge rate", disabled_by_default: true }   # <- Pedro: charge_rate
+  driver_temp_setting: { id: driver_temp, name: "Climate temperature", disabled_by_default: true } # <- Pedro: driver_temp
+
+# BLE sensors from the standard ble_client platform
+sensor:
+  - platform: ble_client
+    type: rssi
+    id: ble_signal
+    ble_client_id: ble_tesla_id
+    name: "BLE Signal"
+    icon: mdi:bluetooth
+    update_interval: 60s
+    entity_category: diagnostic
+
+  # Migrated from PedroKTFC/esphome-tesla-ble: "charge_power_calculated" - recomputes
+  # charge power locally (voltage * current * phases) instead of relying on the
+  # vehicle's own reported charger_power, which can lag or read 0 right after a
+  # charge session starts/stops.
+  - platform: template
+    name: "Charge power calculated"
+    id: charge_power_calculated
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    icon: mdi:lightning-bolt
+    accuracy_decimals: 0
+    disabled_by_default: true
+    update_interval: 2s
+    lambda: |-
+      if (id(charge_voltage).has_state() && id(charge_current).has_state() && id(charger_phases).has_state()) {
+        float voltage = id(charge_voltage).state;
+        float current = id(charge_current).state;
+        float phases = id(charger_phases).state;
+
+        // Avoids multiplication by NaN or invalid values
+        if (!std::isnan(voltage) && !std::isnan(current) && !std::isnan(phases)) {
+          return voltage * current * phases;
+        }
+      }
+      // Returns NAN if one or more of the three sensors for the calculation is nan
+      return NAN;
+
+switch:
+  - platform: ble_client
+    ble_client_id: ble_tesla_id
+    name: "BLE Connection"
+    entity_category: diagnostic
+
+# ---------------------------------------------------------------------------
+# ALTERNATIVE SYNTAX: the same entities can also be declared with standard
+# ESPHome platform blocks instead of the direct sub-keys above. Both styles
+# are equivalent; do not declare the same key in both places (config will
+# fail validation with a clear error). Example (equivalent to `locked:` and
+# `user_present:` above, plus shift_state as a text sensor):
+#
+# binary_sensor:
+#   - platform: tesla_ble_vehicle
+#     tesla_ble_vehicle_id: tesla_ble_vehicle_id
+#     locked:
+#       id: vehicle_locked
+#       name: "Tesla Vehicle Locked State"
+#     user_present:
+#       id: vehicle_user_present
+#       name: "Tesla User Presence"
+#
+# text_sensor:
+#   - platform: tesla_ble_vehicle
+#     tesla_ble_vehicle_id: tesla_ble_vehicle_id
+#     shift_state:
+#       id: vehicle_shift_state
+#       name: "Tesla Shift State"

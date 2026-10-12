@@ -1,0 +1,17 @@
+esp32:
+  board: $board
+  variant: $variant
+  flash_size: $flash_size
+  framework:
+    type: esp-idf
+    components:
+      - name: tesla-ble
+        source: https://github.com/13210986088/tesla-ble.git
+        # BUGFIX: the repo 13210986088/tesla-ble has NO v5.0.3 tag/branch
+        # (verified: `git fetch origin v5.0.3` -> "couldn't find remote ref"),
+        # so any build from a clean cache failed at dependency fetch time.
+        # Pinned instead to the exact commit that the version-5.0.3 manifest
+        # on main points at (2026-05-03, "Update vehicle.cpp"). If you own the
+        # tesla-ble repo, re-creating the v5.0.3 tag at 04a1b0d and reverting
+        # this line to `ref: v5.0.3` is the cleanest long-term fix.
+        ref: 04a1b0dc6369b786ec961b0fcc070ab451bb4e48
